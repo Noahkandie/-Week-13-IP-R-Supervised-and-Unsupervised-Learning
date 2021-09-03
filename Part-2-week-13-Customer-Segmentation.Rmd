@@ -1,0 +1,429 @@
+---
+title: "Customer Segmentation"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Customer Segmentation
+## Problem Definition
+
+Kira Plastinina is a Russian brand that is sold through a defunct chain of retail stores in Russia, Ukraine, Kazakhstan, Belarus, China, Philippines, and Armenia. The brand’s Sales and Marketing team would like to understand their customer’s behavior from data that they have collected over the past year. More specifically, they would like to learn the characteristics of customer groups.
+# Data Sourcing
+
+Data being used in this study was provided by Moringa School
+
+### Data Description
+
+-The dataset consists of 10 numerical and 8 categorical attributes.
+
+-The Revenue attribute can be used as the class label.
+
+-“Administrative”, “Administrative Duration”, “Informational”, “Informational Duration”, “Product Related” and “Product Related Duration” represents the number of different types of pages visited by the visitor in that session and total time spent in each of these page categories. The values of these features are derived from the URL information of the pages visited by the user and updated in real-time when a user takes an action, e.g. moving from one page to another.
+
+### Metrics Measured by Google Analytics
+
+-The value of the Bounce Rate feature for a web page refers to the percentage of visitors who enter the site from that page and then leave (“bounce”) without triggering any other requests to the analytics server during that session.
+
+-The value of the Exit Rate feature for a specific web page is calculated as for all pageviews to the page, the percentage that was the last in the session.
+   
+- The Page Value feature represents the average value for a web page that a user visited before completing an e-commerce transaction.
+
+-The Special Day feature indicates the closeness of the site visiting time to a specific special day (e.g. Mother’s Day, Valentine’s Day) in which the sessions are more likely to be finalized with the transaction. The value of this attribute is determined by considering the dynamics of e-commerce such as the duration between the order date and delivery date. For example, for Valentina’s day, this value takes a nonzero value between February 2 and February 12, zero before and after this date unless it is close to another special day, and its maximum value of 1 on February 8.
+
+- The dataset also includes the operating system, browser, region, traffic type, visitor type as returning or new visitor, a Boolean value indicating whether the date of the visit is weekend, and month of the year.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Install packages and libraries
+package<-c('tidyverse','lumbridate','readxl','Hmisc','skimr','ggplot2','caret','caretEnsemble','PerfomanceAnalytics','kableExtra','kernlab','randomForest','xgboost')
+suppressMessages(pacman::p_load(package,character.only=TRUE))
+```
+# Reading/Checking data
+```{r}
+customer<-read.csv("http://bit.ly/EcommerceCustomersDataset")
+head(customer)
+```
+```{r}
+tail(customer)
+```
+
+```{r}
+# Preview the dataset
+str(customer)
+```
+```{r}
+sapply(customer,class)
+```
+```{r}
+##CHeck shape/dimension
+dim(customer)
+```
+```{r}
+#Summary
+summary(customer)
+```
+
+```{r}
+#Checking for unique characters
+sapply(customer , function(x) length(unique(x)))
+```
+## Data CLeaning
+```{r}
+# Check for missing values
+colSums(is.na(customer))
+```
+SInce we have a minute number of null values(<15) of 12330 rows we will drop them.
+```{r} 
+# we drop and review the missing values
+customer<-na.omit(customer)
+colSums(is.na(customer))
+```
+```{r}
+
+# we check for duplicates
+anyDuplicated(customer)
+
+# We preview the duplicates
+customer[duplicated(customer),]
+```
+```{r}
+cust<-customer[!duplicated(customer),]
+#check shape
+dim(cust)
+```
+```{r}
+# Change column names to lowercase
+names(cust)<-tolower(names(cust))
+colnames(cust)
+```
+```{r}
+library(magrittr)
+cat_cols = c('month', 'operatingsystems',   'browser',  'region',   'traffictype', 'visitortype')
+
+# Changing columns to factors
+cust[,cat_cols] %<>% lapply(function(x) as.factor(as.character(x)))
+str(cust)
+```
+
+```{r}
+# we check for outliers
+#First we select numeric columns 
+nums <- subset(cust, select = -c(specialday, month, operatingsystems,browser, region, traffictype, visitortype,weekend,revenue))
+head(nums)
+boxplot(nums)
+```
+All of the numerical columns have outliers. It is also important to note that a few of this have negative values. But since we are dealing with customers and reatails have all sort of customers who have different values and capabilities we will leave these outliers as they are. This way we will be able to capture this groups when grouping the customers
+## Exploratory Data Analysis
+### NUmerical Analysis
+```{r}
+library(psych)
+```
+```{r}
+describe(cust)
+```
+```{r}
+#Plotting histograms to show distribution of variables 
+par(mfrow = c(2, 2))
+hist(nums$administrative)
+hist(nums$informational)
+hist(nums$bouncerates)
+hist(nums$exitrates)
+hist(nums$administrative_duration)
+hist(nums$informational_duration)
+hist(nums$productrelated_duration)
+hist(nums$pagevalues)
+```
+###Conclusions 
+From the central tendency we see that: 
+1. All variables have a sample size of 12199 2. Product related duration have the largest figures and range, meaning peole visiting the website spend alot of time in the product related page 
+3. People also spend a considerable amount of time checking on the administration 
+4. People spend the least of time checking out the information related page
+
+From the above distributions we can conclude that 1. Our numerical values are skewed to the left 2. They don’t follow a normal distribution 3. Variables dealing with duration have larger values because they represent duration of user on page 4. Exit rates vary alot
+
+### Categorical analysis
+```{r}
+library(ggpubr)
+#Did most traffic generate any revenue?
+r <- ggplot(data = cust) +
+  geom_bar(mapping = aes(x = revenue))
+#Was traffic high on weekends or not?
+w <- ggplot(data = cust) +
+  geom_bar(mapping = aes(x = weekend))
+#What group of visitors frequented the website?
+v <-ggplot(data = cust) +
+  geom_bar(mapping = aes(x = visitortype))
+#What traffic type was mostly used?
+t <- ggplot(data = cust) +
+  geom_bar(mapping = aes(x = traffictype))
+ggarrange(r, w, v, t + rremove("x.text"), 
+          ncol = 2, nrow = 2)
+```
+```{r}
+#Which months had the highest traffic
+m <- ggplot(data = cust) +
+  geom_bar(mapping = aes(x = month))
+#Distribution of operating systems on traffic
+o <- ggplot(data = cust) +
+  geom_bar(mapping = aes(x = operatingsystems))
+#Browser distribution
+b <-ggplot(data = cust) +
+  geom_bar(mapping = aes(x = browser))
+#Which regions trafficked the website the most?
+r <- ggplot(data =cust) +
+  geom_bar(mapping = aes(x = region))
+ggarrange(m, o, b, r + rremove("x.text"), 
+          ncol = 2, nrow = 2)
+```
+###Conclusions 
+1. Most of the traffic in the website doesn’t generate any revenue 
+2. There is more traffic on weekdays than weekends, but the traffic on weekends is relatively high considering that weekends consist of only 2 days per week. 
+3. Most of the people visiting the website are returning visitors, only a small percentage are new 
+4. There is alot of traffic in the website in May, November, March and Dec 
+. Almost 5000 of the traffic in the website for the year was from region 1, around 2,300 from region 3 and the other regions ranging from 1000 to 300 individuals.
+
+### Bivariate Analysis
+```{r}
+#Revenue generation per month
+cust %>% 
+  ggplot() +
+  aes(x = month, revenue = ..count../nrow(cust), fill = revenue) +
+  geom_bar() +
+  ylab("relative frequency")
+```
+```{r}
+#Checking how weekends generated revenue as compared to weekdays
+ggplot(cust, 
+       aes(x = weekend, 
+           fill = revenue)) + 
+  geom_bar()
+```  
+
+
+More revenue was generated during the weekdays than the weekends. This is to be expected since there are way more records of weekdays than of weekends.
+
+```{r}
+#Checking how regions generated revenue as compared to weekdays
+ggplot(cust, 
+       aes(x = region, 
+           fill = revenue)) + 
+  geom_bar()
+```
+```{r}
+#Checking how different traffic type generated revenue 
+ggplot(cust, 
+       aes(x = traffictype, 
+           fill = revenue)) + 
+  geom_bar()
+```
+Traffic 2 has the highest number of revenues, 12, 14, 16, 17, and 18 return the lowest.
+
+```{r}
+#Checking how different OS type generated revenue 
+ggplot(cust, 
+       aes(x = operatingsystems, 
+           fill = revenue)) + 
+  geom_bar()
+```
+Operating System 2 returns the highest number of revenue while OS 5, 6, and 7 return the lowest.
+```{r}
+#Checking how different browser type generated revenue 
+ggplot(cust, 
+       aes(x = browser, 
+           fill = revenue)) + 
+  geom_bar()
+```
+Browser 2 returns the highest number of revenue while 3, 7, 9, 11, and 12 return the lowest.
+
+```{r}
+#Checking how special day generated revenue as compared to weekdays
+ggplot(cust, 
+       aes(x = specialday, 
+           fill = revenue)) + 
+  geom_bar()
+```
+
+```{r}
+ggplot(cust, aes(x = administrative, fill = revenue, color =revenue)) +
+geom_freqpoly(binwidth = 1) +
+labs(title = "Administrative by Revenue")
+```
+```{r}
+# Informational by Revenue
+ggplot(cust, aes(x = informational, fill = revenue, color = revenue)) +
+geom_freqpoly(binwidth = 1) +
+labs(title = "Informational by Revenue")
+```
+```{r}
+# product related by Revenue
+ggplot(cust, aes(x = productrelated, fill = revenue, color = revenue)) +
+geom_histogram(binwidth = 1) +
+labs(title = "Product Related by Revenue")
+```
+```{r}
+# bounce rates by Revenue
+ggplot(cust, aes(x = bouncerates, fill = revenue, color = revenue)) +
+geom_freqpoly(binwidth = 1) +
+labs(title = "Bounce Rates by Revenue")
+```
+
+### Correlation
+```{r}
+# using a heat map to visualize variable correlations
+#Get the correlation matrix
+res = cor(nums)
+#Plotting a correlation plot
+library(corrplot)
+corrplot(round(res,2), method="color",addCoef.col = "black", 
+         tl.col="black", tl.srt=45,type='lower')        
+
+
+
+```
+```{r}
+# we drop the highly correlated columns
+
+to_drop <- c("administrative_duration", "informational_duration", "productrelated_duration", "exitrates")
+
+cust <- cust[, !names(cust) %in% to_drop]
+head(cust)
+```
+## Feature ENgineering
+```{r}
+
+#converting the variable weekend to a dummy
+#with weekend being a ‘1’ and a weekday being a ‘0’
+cust <- cust %>%
+  mutate(Weekend_binary = ifelse(weekend == "FALSE",0,1))
+head(cust)
+```
+```{r}
+# shuffling our data set to randomize the records
+shuffle_index <- sample(1:nrow(cust))
+Cust <- cust[shuffle_index, ]
+dim(cust)
+head(cust)
+```
+
+```{r}
+#Removing the target column and weekday column
+mod <- subset(cust, select = -c(weekend))
+#Separating features from target
+df_cust <-subset(mod,select=-c(revenue))
+df_class <- mod[, "revenue"]
+head(df_cust)
+```
+```{r}
+colnames(df_cust)
+sapply(df_cust,class)
+```
+```{r}
+# convert the factors into numerics
+df_cust$month <- as.numeric(df_cust$month)
+df_cust$operatingsystems <- as.numeric(df_cust$operatingsystems)
+df_cust$browser <- as.numeric(df_cust$browser)
+df_cust$region <- as.numeric(df_cust$region)
+df_cust$traffictype <- as.numeric(df_cust$traffictype)
+df_cust$visitortype <- as.numeric(df_cust$visitortype)
+str(df_cust)
+```
+```{r}
+# checking for missing values
+anyNA(df_cust)
+```
+We need to scale our data set before we can perform k-means clustering.
+
+```{r}
+library(dplyr)
+
+scale_df <- scale(df_cust)
+head(scale_df)
+```
+# Implementing the Soliution
+## Modelling
+## K- means Clustering
+
+```{R}
+# Applying the K-means clustering algorithm with no. of centroids(k)=2
+# ---
+# 
+result<- kmeans(scale_df,2) 
+
+# Previewing the no. of records in each cluster
+# 
+result$size 
+```
+```{R}
+# Getting the value of cluster center datapoint value(3 centers for k=3)
+# ---
+# 
+result$centers 
+```
+```{R}
+# Getting the cluster vector that shows the cluster where each record falls
+# ---
+# 
+result$cluster
+```
+```{r}
+par(mfrow = c(1,2), mar = c(5,4,2,2))
+```
+
+## Heirarchial Clustering
+
+
+As with K-means, we will use the rescaled dataset for hierarchical clustering.
+```{r}
+
+
+# first we compute the euclidean distance
+d <- dist(scale_df, method = "euclidean")
+
+# then we compute hierarchical clustering using the Ward method
+hier <- hclust(d, method = "ward.D2" )
+```
+```{r}
+# finally, we plot the dendogram
+plot(hier, cex = 0.6, hang = -1)
+```
+
+```{r}
+# Hierarchical clustering using Complete Linkage
+hc1 <- hclust(d, method = "complete" )
+
+# Plot the obtained dendrogram
+plot(hc1, cex = 0.6, hang = -1)
+```
+```{r}
+#Hierarchical clustering using Average Linkage
+hc2 <- hclust(d, method = "average" )
+
+# Plot the obtained dendrogram
+plot(hc2, cex = 0.6, hang = -1)
+```
+
+
+## DBScan Clustering
+```{R}
+# Applying our DBSCAN algorithm
+# ---
+# We want minimum 4 points with in a distance of eps(0.4)
+# 
+library(dbscan)
+db<-dbscan(scale_df,eps=0.4,MinPts = 4)
+print(db)
+```
+```{R}
+# We also plot our clusters as shown
+# ---
+# The dataset and cluster method of dbscan is used to plot the clusters.
+# 
+hullplot(scale_df,db$cluster)
+```
+## Conclusion
+
+It would be advised that the Kira Plastinina marketers should use the K Means clustering for Customer Segmentation since the clusters are clearer.
